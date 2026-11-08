@@ -1,0 +1,40 @@
+# The 9 AM / 9 PM Central Discord digest of the YouTube channels. No Claude involved, so it keeps going when the
+# usage limit runs out. Started by cron-job.org (README.md), like the upload workflows: GitHub's own `schedule:`
+# doesn't fire reliably for this owner. Two calls in one slot are harmless: the second sees the slot already sent.
+name: digest
+on:
+  workflow_dispatch:
+    inputs:
+      force: {description: "send even if this morning/evening digest was already sent", type: boolean, default: false}
+      dry_run: {description: "only print it in the run log", type: boolean, default: false}
+concurrency: {group: digest, cancel-in-progress: false}
+permissions: {contents: write, actions: read}
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: digest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          args=""
+          [ "${{ inputs.force }}" = "true" ] && args="$args --force"
+          [ "${{ inputs.dry_run }}" = "true" ] && args="$args --dry-run"
+          python digest.py $args
+      - name: save what was reported
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898729+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet && exit 0
+          git commit -qm "digest: state after $(TZ=America/Chicago date '+%F %-I:%M %p') CT [skip ci]"
+          for i in 1 2 3; do git pull -q --rebase origin "$GITHUB_REF_NAME" && git push -q && break; sleep 5; done
